@@ -1,0 +1,6 @@
+{
+  "name": "PDF to Vision Image Converter",
+  "description": "A server-side service to convert PDF construction plans into high-resolution images for vision-based analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
