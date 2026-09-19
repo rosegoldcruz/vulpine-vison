@@ -1,0 +1,16 @@
+{
+  "unit_mix": [
+    { "unit_type": "A1", "count": 10 }
+  ],
+  "takeoff_rows": [
+    { "cabinet_family": "B24", "quantity_per_unit": 1 },
+    { "cabinet_family": "W30", "quantity_per_unit": 2 }
+  ],
+  "expected_mappings": [
+    { "cabinet_family": "B24", "sku": "SKU-B24" },
+    { "cabinet_family": "W30", "sku": "SKU-W30" }
+  ],
+  "expected_totals_cents": {
+    "cabinets": 31000
+  }
+}
