@@ -3,8 +3,9 @@ export const runtime = 'nodejs';
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { asApiServiceError } from '@/lib/autobidder/api/errors';
 import { ingestUploads } from '@/lib/autobidder/services/upload-ingestion';
+import { withVisionIntegration } from '@/lib/platform/integration-auth';
 
-export async function POST(req: Request) {
+async function uploadFiles(req: Request) {
   try {
     const projectId = req.headers.get('x-project-id') || '';
     if (!projectId) {
@@ -34,3 +35,5 @@ export async function POST(req: Request) {
     );
   }
 }
+
+export const POST = withVisionIntegration('POST /api/uploads', uploadFiles);

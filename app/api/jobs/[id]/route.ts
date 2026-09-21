@@ -3,8 +3,9 @@ export const runtime = 'nodejs';
 import { BidJobRepository } from '@/lib/autobidder/repositories/bid-job-repository';
 import { ProjectRepository } from '@/lib/autobidder/repositories/project-repository';
 import { fail, ok } from '@/lib/autobidder/api/response';
+import { withVisionIntegration } from '@/lib/platform/integration-auth';
 
-export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
+async function getJob(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
     const jobRepo = new BidJobRepository();
@@ -20,3 +21,5 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     return fail({ code: 'INTERNAL_ERROR', message: 'Failed to read job.' }, 500);
   }
 }
+
+export const GET = withVisionIntegration('GET /api/jobs/:id', getJob);

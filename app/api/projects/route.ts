@@ -3,8 +3,9 @@ export const runtime = 'nodejs';
 import { ProjectRepository } from '@/lib/autobidder/repositories/project-repository';
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { createProjectSchema } from '@/lib/autobidder/validation/schemas';
+import { withVisionIntegration } from '@/lib/platform/integration-auth';
 
-export async function POST(req: Request) {
+async function createProject(req: Request) {
   try {
     const body = await req.json();
     const parsed = createProjectSchema.safeParse(body);
@@ -27,3 +28,5 @@ export async function POST(req: Request) {
     return fail({ code: 'INTERNAL_ERROR', message: 'Failed to create project.' }, 500);
   }
 }
+
+export const POST = withVisionIntegration('POST /api/projects', createProject);

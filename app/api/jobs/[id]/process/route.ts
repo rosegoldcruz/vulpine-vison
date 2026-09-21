@@ -6,8 +6,9 @@ import { fail, ok } from '@/lib/autobidder/api/response';
 import { asApiServiceError } from '@/lib/autobidder/api/errors';
 import { processJobSchema } from '@/lib/autobidder/validation/schemas';
 import { processJob } from '@/lib/autobidder/services/workflow-service';
+import { withVisionIntegration } from '@/lib/platform/integration-auth';
 
-export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
+async function processVisionJob(req: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
     const body = await req.json();
@@ -40,3 +41,5 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     );
   }
 }
+
+export const POST = withVisionIntegration('POST /api/jobs/:id/process', processVisionJob);
