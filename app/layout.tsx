@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Vulpine Cabinet AutoBidder',
-  description: 'Production convergence App Router migration for cabinet estimating workflows.',
+  title: 'Vulpine Cabinet Brain',
+  description: 'Controlled cabinet estimating, plan evidence, review, QA, and backoffice operations.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

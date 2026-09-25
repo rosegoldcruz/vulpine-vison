@@ -3,9 +3,10 @@ export const runtime = 'nodejs';
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { asApiServiceError } from '@/lib/autobidder/api/errors';
 import { ingestUploads } from '@/lib/autobidder/services/upload-ingestion';
-import { withVisionIntegration } from '@/lib/platform/integration-auth';
+import { withVisionUserOrIntegration } from '@/lib/platform/integration-auth';
+import type { Principal } from '@/types/canonical';
 
-async function uploadFiles(req: Request) {
+async function uploadFiles(req: Request, principal: Principal) {
   try {
     const projectId = req.headers.get('x-project-id') || '';
     if (!projectId) {
@@ -20,7 +21,7 @@ async function uploadFiles(req: Request) {
     }
 
     const formData = await req.formData();
-    const result = await ingestUploads(projectId, formData);
+    const result = await ingestUploads(projectId, formData, principal);
     return ok(result, 201);
   } catch (error: any) {
     const typed = asApiServiceError(error);
@@ -36,4 +37,4 @@ async function uploadFiles(req: Request) {
   }
 }
 
-export const POST = withVisionIntegration('POST /api/uploads', uploadFiles);
+export const POST = withVisionUserOrIntegration('project:upload', 'POST /api/uploads', uploadFiles);

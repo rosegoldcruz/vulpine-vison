@@ -17,6 +17,17 @@ export function asApiServiceError(error: unknown): ApiServiceError {
   if (error instanceof ApiServiceError) {
     return error;
   }
+  if (error instanceof Error && 'code' in error && 'status' in error) {
+    const candidate = error as Error & { code: unknown; status: unknown; details?: unknown };
+    if (typeof candidate.code === 'string' && typeof candidate.status === 'number') {
+      return new ApiServiceError(
+        candidate.code,
+        candidate.message,
+        candidate.status,
+        candidate.details && typeof candidate.details === 'object' ? candidate.details as Record<string, unknown> : {},
+      );
+    }
+  }
   if (error instanceof Error) {
     return new ApiServiceError('INTERNAL_ERROR', error.message, 500);
   }

@@ -3,11 +3,17 @@ export const runtime = 'nodejs';
 import { z } from 'zod';
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { runChat, type ChatMessage } from '@/lib/autobidder/services/chat-service';
+import { groundProjectChat } from '@/lib/autobidder/services/project-assistant-service';
+import { requestPrincipal } from '@/lib/autobidder/auth/request-principal';
+import { requirePermission } from '@/lib/autobidder/auth/authorization';
+import { asApiServiceError } from '@/lib/autobidder/api/errors';
 
 const chatSchema = z.object({
   history: z.array(z.object({ role: z.enum(['user', 'model']), text: z.string() })).default([]),
   message: z.string().min(1),
-  model: z.string().default('gemini-3.5-flash'),
+  model: z.string().optional(),
+  mode: z.enum(['text', 'voice']).default('text'),
+  jobId: z.string().min(1).optional(),
 });
 
 export async function POST(req: Request) {
@@ -25,11 +31,17 @@ export async function POST(req: Request) {
       );
     }
 
+    if (parsed.data.jobId) {
+      const principal = requestPrincipal(req);
+      requirePermission(principal, 'project:read');
+      return ok(await groundProjectChat(parsed.data.jobId, parsed.data.message, principal));
+    }
     const history = parsed.data.history as ChatMessage[];
-    const text = await runChat(history, parsed.data.message, parsed.data.model);
+    const text = await runChat(history, parsed.data.message, parsed.data.model, parsed.data.mode);
     return ok({ text });
-  } catch (error: any) {
+  } catch (error) {
     console.error('POST /api/chat failed', error);
-    return fail({ code: 'CHAT_FAILED', message: error?.message || 'Chat request failed.', details: {} }, 500);
+    const typed = asApiServiceError(error);
+    return fail({ code: typed.code === 'INTERNAL_ERROR' ? 'CHAT_FAILED' : typed.code, message: typed.message || 'Chat request failed.', details: typed.details }, typed.status);
   }
 }

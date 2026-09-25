@@ -1,10 +1,13 @@
 import 'server-only';
 import { randomUUID } from 'crypto';
 import type { BidJob, ProjectManifest } from '@/types';
-import { ensureDataDirs, listFiles, readJson, writeJson } from '@/lib/autobidder/storage/file-store';
+import { getDatabase } from '@/lib/autobidder/db/database';
 
-function jobPath(jobId: string) {
-  return `jobs/${jobId}.json`;
+type JobRow = { payload_json: string };
+
+function parseJob(row: JobRow | undefined): BidJob | null {
+  if (!row) return null;
+  return JSON.parse(row.payload_json) as BidJob;
 }
 
 function emptyQa() {
@@ -23,7 +26,6 @@ function emptyQa() {
 
 export class BidJobRepository {
   async create(project: ProjectManifest): Promise<BidJob> {
-    await ensureDataDirs();
     const now = new Date().toISOString();
     const job: BidJob = {
       id: randomUUID(),
@@ -43,31 +45,37 @@ export class BidJobRepository {
       timings: [],
       logs: [],
     };
-    await writeJson(jobPath(job.id), job);
+    getDatabase()
+      .prepare(
+        `INSERT INTO bid_jobs
+          (id, project_id, workflow_state, payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(job.id, job.projectId, 'project_created', JSON.stringify(job), now, now);
     return job;
   }
 
   async get(jobId: string): Promise<BidJob | null> {
-    await ensureDataDirs();
-    return readJson<BidJob>(jobPath(jobId));
+    const row = getDatabase().prepare('SELECT payload_json FROM bid_jobs WHERE id = ?').get(jobId) as JobRow | undefined;
+    return parseJob(row);
   }
 
   async save(job: BidJob): Promise<void> {
-    await ensureDataDirs();
     job.updatedAt = new Date().toISOString();
-    await writeJson(jobPath(job.id), job);
+    const result = getDatabase()
+      .prepare(
+        `UPDATE bid_jobs
+         SET payload_json = ?, updated_at = ?, version = version + 1
+         WHERE id = ?`,
+      )
+      .run(JSON.stringify(job), job.updatedAt, job.id);
+    if (result.changes !== 1) throw new Error(`Bid job not found: ${job.id}`);
   }
 
   async listByProject(projectId: string): Promise<BidJob[]> {
-    await ensureDataDirs();
-    const files = await listFiles('jobs');
-    const jobs: BidJob[] = [];
-    for (const f of files) {
-      const value = await readJson<BidJob>(f);
-      if (value && value.projectId === projectId) {
-        jobs.push(value);
-      }
-    }
-    return jobs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const rows = getDatabase()
+      .prepare('SELECT payload_json FROM bid_jobs WHERE project_id = ? ORDER BY created_at DESC')
+      .all(projectId) as JobRow[];
+    return rows.map((row) => parseJob(row)).filter((value): value is BidJob => value !== null);
   }
 }

@@ -1,0 +1,235 @@
+import type { BuildExportSnapshotInput } from '@/lib/autobidder/exports/contracts';
+
+export function makeExportInput(options: {
+  audience?: BuildExportSnapshotInput['audience'];
+  safeToSend?: boolean;
+  projectName?: string;
+  description?: string;
+} = {}): BuildExportSnapshotInput {
+  const audience = options.audience ?? 'internal_review';
+  const safeToSend = options.safeToSend ?? false;
+  const occurredAt = '2026-09-25T12:00:00.000Z';
+  return {
+    snapshotId: 'snapshot-1',
+    audience,
+    createdAt: '2026-09-25T12:05:00.000Z',
+    createdBy: 'reviewer-1',
+    project: {
+      id: 'project-1',
+      organizationId: 'org-1',
+      name: options.projectName ?? 'Oak Ridge',
+      customerName: 'Northwind Builders',
+      projectAddress: '100 Main Street',
+      currency: 'USD',
+      createdBy: 'estimator-1',
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      version: 3,
+    },
+    bidJob: {
+      id: 'job-1',
+      projectId: 'project-1',
+      state: audience === 'customer' ? 'cabinet_bid_safe_to_send' : 'cabinet_bid_review_required',
+      stateHistory: [],
+      unresolvedItemIds: safeToSend ? [] : ['qa-issue-1'],
+      approvalIds: ['approval-export-1'],
+      artifactIds: [],
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+      version: 8,
+    },
+    sourceDocuments: [
+      {
+        id: 'document-1',
+        projectId: 'project-1',
+        originalPath: 'plans/A101.pdf',
+        storageKey: 'projects/project-1/documents/document-1.pdf',
+        fileName: 'A101.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 1000,
+        sha256: 'abc123',
+        ingestionOutcome: 'accepted',
+        createdAt: occurredAt,
+      },
+    ],
+    planSheets: [
+      {
+        id: 'sheet-1',
+        sourceDocumentId: 'document-1',
+        pageNumber: 2,
+        sheetNumber: 'A-101',
+        title: 'Unit A Kitchen',
+        rotation: 0,
+        reviewRequired: false,
+      },
+    ],
+    evidence: [
+      {
+        id: 'evidence-1',
+        projectId: 'project-1',
+        planSheetId: 'sheet-1',
+        kind: 'cabinet',
+        region: { x: 0.1, y: 0.2, width: 0.3, height: 0.15 },
+        text: 'B24 shown at kitchen elevation',
+        confidence: 0.98,
+        createdAt: occurredAt,
+      },
+      {
+        id: 'evidence-measurement-1',
+        projectId: 'project-1',
+        planSheetId: 'sheet-1',
+        kind: 'measurement',
+        region: { x: 0.2, y: 0.3, width: 0.2, height: 0.02 },
+        text: '24 in verified dimension',
+        createdAt: occurredAt,
+      },
+      {
+        id: 'evidence-snippet-1',
+        projectId: 'project-1',
+        planSheetId: 'sheet-1',
+        kind: 'snippet',
+        region: { x: 0.05, y: 0.1, width: 0.4, height: 0.3 },
+        text: 'Annotated kitchen evidence',
+        createdAt: occurredAt,
+      },
+    ],
+    unitTypes: [
+      {
+        id: 'unit-type-1',
+        projectId: 'project-1',
+        code: 'A1',
+        name: 'Unit A',
+        accessibility: 'standard',
+        aliases: [],
+      },
+    ],
+    unitMixEntries: [
+      {
+        id: 'unit-mix-1',
+        projectId: 'project-1',
+        unitTypeId: 'unit-type-1',
+        extractedCount: 10,
+        verifiedCount: 10,
+        evidenceIds: ['evidence-1'],
+        status: 'verified',
+        approvedBy: 'reviewer-1',
+        approvedAt: occurredAt,
+      },
+    ],
+    cabinetInstances: [
+      {
+        id: 'cabinet-1',
+        projectId: 'project-1',
+        unitTypeId: 'unit-type-1',
+        room: 'Kitchen',
+        category: 'base',
+        interpretedCode: 'B24',
+        widthInches: 24,
+        quantityPerUnit: 2,
+        ada: false,
+        evidenceIds: ['evidence-1'],
+        status: 'approved',
+        reviewerId: 'reviewer-1',
+      },
+    ],
+    takeoffLines: [
+      {
+        id: 'takeoff-1',
+        bidJobId: 'job-1',
+        cabinetInstanceId: 'cabinet-1',
+        unitTypeId: 'unit-type-1',
+        quantityPerUnit: 2,
+        evidenceIds: ['evidence-1'],
+        status: 'approved',
+      },
+    ],
+    catalogSkus: [
+      {
+        id: 'sku-1',
+        workbookId: 'workbook-1',
+        sourceWorkbook: 'pricing.xlsx',
+        sourceWorksheet: 'Catalog',
+        sourceRow: 42,
+        rawValues: { SKU: 'B24', Cost: 125 },
+        sku: 'B24',
+        cabinetCode: 'B24',
+        description: '24 inch base cabinet',
+        cabinetFamily: 'base',
+        widthInches: 24,
+        modifiers: [],
+        unitCostCents: 12500,
+        active: true,
+      },
+    ],
+    skuMappings: [
+      {
+        id: 'mapping-1',
+        takeoffLineId: 'takeoff-1',
+        catalogSkuId: 'sku-1',
+        outcome: 'exact_match',
+        matchMethod: 'cabinet_code_exact',
+        confidence: 1,
+      },
+    ],
+    estimateLines: [
+      {
+        id: 'estimate-1',
+        bidJobId: 'job-1',
+        mappingId: 'mapping-1',
+        unitMixEntryId: 'unit-mix-1',
+        category: 'cabinet',
+        description: options.description ?? '24 inch base cabinet',
+        quantityPerUnit: 2,
+        verifiedUnitCount: 10,
+        projectQuantity: 20,
+        unitCostCents: 12500,
+        extendedCostCents: 250000,
+        currency: 'USD',
+        calculationVersion: 'estimate/v1',
+        evidenceIds: ['evidence-1'],
+      },
+    ],
+    qaResult: {
+      id: 'qa-1',
+      bidJobId: 'job-1',
+      safeToSend,
+      issues: safeToSend
+        ? []
+        : [
+            {
+              id: 'qa-issue-1',
+              code: 'REVIEW_REQUIRED',
+              severity: 'warning',
+              message: 'Estimator review remains open.',
+              entityType: 'BidJob',
+              entityId: 'job-1',
+              evidenceIds: [],
+              resolved: false,
+            },
+          ],
+      reconciliation: {
+        'quantity:estimate-1': { expected: 20, actual: 20, passed: true },
+        'cost:estimate-1': { expected: 250000, actual: 250000, passed: true },
+      },
+      reviewerRequirements: safeToSend ? [] : ['Estimator review remains open.'],
+      executedAt: occurredAt,
+      executedBy: 'cabinet_qa_agent',
+      calculationVersion: 'estimate/v1',
+    },
+    approvals: [
+      {
+        id: 'approval-export-1',
+        projectId: 'project-1',
+        bidJobId: 'job-1',
+        type: 'export',
+        targetType: 'BidJob',
+        targetId: 'job-1',
+        decision: 'approved',
+        note: 'Approved for internal review package.',
+        actorId: 'reviewer-1',
+        occurredAt,
+      },
+    ],
+    assumptions: ['Pricing excludes freight.'],
+  };
+}

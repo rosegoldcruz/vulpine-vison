@@ -6,6 +6,20 @@ export interface ProjectFile {
   mimeType: string;
 }
 
+export interface LeadHandoffContext {
+  correlationId: string;
+  sourceSystem: string;
+  leadId: string;
+  accountName?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  opportunityName?: string;
+  notes?: string;
+  attachmentRefs?: string[];
+  createdAt: string;
+}
+
 export interface ProjectManifest {
   projectId: string;
   projectName: string;
@@ -15,4 +29,5 @@ export interface ProjectManifest {
   pageCount: number;
   createdAt: string;
   processingStatus: 'created' | 'uploaded' | 'processing' | 'ready' | 'failed';
+  leadHandoff?: LeadHandoffContext;
 }

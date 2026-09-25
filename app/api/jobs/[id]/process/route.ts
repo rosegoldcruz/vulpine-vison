@@ -5,12 +5,17 @@ import { ProjectRepository } from '@/lib/autobidder/repositories/project-reposit
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { asApiServiceError } from '@/lib/autobidder/api/errors';
 import { processJobSchema } from '@/lib/autobidder/validation/schemas';
-import { processJob } from '@/lib/autobidder/services/workflow-service';
-import { withVisionIntegration } from '@/lib/platform/integration-auth';
+import { processJobWithAutomaticRetries } from '@/lib/autobidder/services/workflow-service';
+import { withVisionUserOrIntegration } from '@/lib/platform/integration-auth';
+import type { Principal } from '@/types/canonical';
 
-async function processVisionJob(req: Request, context: { params: Promise<{ id: string }> }) {
+async function processVisionJob(req: Request, principal: Principal, context: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await context.params;
+    const ownership = await new BidJobRepository().get(id);
+    if (!ownership || !await new ProjectRepository().get(ownership.projectId, principal.organizationId)) {
+      return fail({ code: 'NOT_FOUND', message: 'Job not found.', details: {} }, 404);
+    }
     const body = await req.json();
     const parsed = processJobSchema.safeParse(body);
     if (!parsed.success || parsed.data.jobId !== id) {
@@ -24,7 +29,7 @@ async function processVisionJob(req: Request, context: { params: Promise<{ id: s
       );
     }
 
-    const job = await processJob(id);
+    const job = await processJobWithAutomaticRetries(id, principal);
     const projectRepo = new ProjectRepository();
     const project = await projectRepo.get(job.projectId);
     return ok({ job, project });
@@ -42,4 +47,4 @@ async function processVisionJob(req: Request, context: { params: Promise<{ id: s
   }
 }
 
-export const POST = withVisionIntegration('POST /api/jobs/:id/process', processVisionJob);
+export const POST = withVisionUserOrIntegration('project:upload', 'POST /api/jobs/:id/process', processVisionJob);

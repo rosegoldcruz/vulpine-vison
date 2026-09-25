@@ -62,7 +62,10 @@ async function reservePort(): Promise<number> {
 async function startServer() {
   server = spawn('npm', ['run', 'start', '--', '-p', `${port}`], {
     cwd: REPO_ROOT,
-    env: process.env,
+    env: {
+      ...process.env,
+      LEADS_INTEGRATION_KEY: process.env.LEADS_INTEGRATION_KEY || 'test-integration-key',
+    },
     stdio: 'pipe',
   });
   await waitForServerReady(`${baseUrl}/`);
@@ -222,6 +225,46 @@ describe.sequential('Phase Zero route-level validation', () => {
     const upload = await uploadFiles(projectId, [malicious]);
     expect(upload.status).toBe(400);
     expectErrorContract(upload.json, 'ZIP_PATH_TRAVERSAL');
+  });
+
+  it('rejects unauthenticated lead handoff requests', async () => {
+    const res = await fetch(`${baseUrl}/api/integrations/leads/handoff`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectName: 'lead-handoff-missing-auth',
+        sourceSystem: 'vulpine-leads',
+        leadId: 'lead-missing-auth',
+      }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(401);
+    expectErrorContract(json, 'UNAUTHORIZED');
+  });
+
+  it('creates a lead handoff project with integration auth', async () => {
+    const res = await fetch(`${baseUrl}/api/integrations/leads/handoff`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-integration-key': 'test-integration-key',
+      },
+      body: JSON.stringify({
+        projectName: 'lead-handoff-success',
+        sourceSystem: 'vulpine-leads',
+        leadId: 'lead-001',
+        accountName: 'Example Development',
+        opportunityName: 'Riverwalk Phase 2',
+        attachmentRefs: ['drive://opps/riverwalk/plan-set.zip'],
+        correlationId: 'corr-route-test-001',
+      }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(201);
+    expect(json.ok).toBe(true);
+    expect(json.data.project.leadHandoff.leadId).toBe('lead-001');
+    expect(json.data.project.leadHandoff.correlationId).toBe('corr-route-test-001');
+    expect(json.data.handoff.projectId).toBe(json.data.project.projectId);
   });
 
   it('verifies real XLSX ingestion and workbook schema metadata via routes', async () => {

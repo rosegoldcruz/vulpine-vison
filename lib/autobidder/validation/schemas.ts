@@ -1,10 +1,13 @@
 import 'server-only';
 
 import { z } from 'zod';
+import { leadsHandoffRequestV1Schema } from '@/lib/platform/contracts/leads-handoff-v1';
 
 export const createProjectSchema = z.object({
   projectName: z.string().min(1).max(120),
 });
+
+export const createLeadHandoffProjectSchema = leadsHandoffRequestV1Schema;
 
 export const processJobSchema = z.object({
   jobId: z.string().min(1),

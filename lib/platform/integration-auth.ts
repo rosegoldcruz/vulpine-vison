@@ -1,6 +1,10 @@
 import 'server-only';
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import type { Principal } from '@/types/canonical';
+import type { Permission } from '@/lib/autobidder/auth/authorization';
+import { requirePermission } from '@/lib/autobidder/auth/authorization';
+import { requestPrincipal } from '@/lib/autobidder/auth/request-principal';
 
 export const VISION_INTEGRATION_AUTH_HEADER = 'x-vulpine-integration-key';
 
@@ -122,5 +126,38 @@ export function withVisionIntegration<TArgs extends unknown[]>(
       }));
       throw error;
     }
+  };
+}
+
+export function withVisionUserOrIntegration<TArgs extends unknown[]>(
+  permission: Permission,
+  route: string,
+  handler: (request: Request, principal: Principal, ...args: TArgs) => Promise<Response> | Response,
+) {
+  return async (request: Request, ...args: TArgs): Promise<Response> => {
+    const startedAt = Date.now();
+    const correlationId = normalizeCorrelationId(request.headers.get('x-correlation-id'));
+    const user = requestPrincipal(request);
+    if (user) {
+      try {
+        requirePermission(user, permission);
+        const response = await handler(request, user, ...args);
+        return finishResponse(response, { actor: user.id, correlationId, method: request.method, route, startedAt });
+      } catch (error: any) {
+        return finishResponse(Response.json({ ok: false, error: { code: error.code || 'FORBIDDEN', message: error.message || 'Permission denied.', details: error.details || {} }, meta: { correlationId } }, { status: error.status || 403 }), { actor: user.id, correlationId, method: request.method, route, startedAt });
+      }
+    }
+    const decision = authenticateVisionRequest({
+      configuredToken: (process.env.VISION_API_TOKEN || '').trim(),
+      providedToken: request.headers.get(VISION_INTEGRATION_AUTH_HEADER) || '',
+      directLoopback: isDirectLoopback(request),
+    });
+    const actor = normalizedActor(request, decision.allowed ? decision.actor : 'unknown');
+    if (decision.allowed === false) {
+      return finishResponse(Response.json({ ok: false, error: { code: decision.code, message: decision.message, details: {} }, meta: { correlationId } }, { status: decision.status }), { actor, correlationId, method: request.method, route, startedAt });
+    }
+    const service: Principal = { id: actor, kind: 'service', displayName: actor, role: 'service', organizationId: 'local', scopes: [permission] };
+    const response = await handler(request, service, ...args);
+    return finishResponse(response, { actor, correlationId, method: request.method, route, startedAt });
   };
 }
