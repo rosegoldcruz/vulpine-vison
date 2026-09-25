@@ -18,6 +18,8 @@ const chatSchema = z.object({
 
 export async function POST(req: Request) {
   try {
+    const principal = requestPrincipal(req);
+    requirePermission(principal, 'project:read');
     const body = await req.json();
     const parsed = chatSchema.safeParse(body);
     if (!parsed.success) {
@@ -32,8 +34,6 @@ export async function POST(req: Request) {
     }
 
     if (parsed.data.jobId) {
-      const principal = requestPrincipal(req);
-      requirePermission(principal, 'project:read');
       return ok(await groundProjectChat(parsed.data.jobId, parsed.data.message, principal));
     }
     const history = parsed.data.history as ChatMessage[];

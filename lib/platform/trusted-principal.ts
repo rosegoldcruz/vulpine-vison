@@ -1,10 +1,11 @@
 import 'server-only';
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type { Permission } from '@/lib/autobidder/auth/authorization';
 import type { Principal, UserRole } from '@/types/canonical';
 
 export const VISION_TRUSTED_PRINCIPAL_HEADER = 'x-vulpine-principal';
+export const VISION_INTEGRATION_AUTH_HEADER = 'authorization';
 
 const USER_ROLES = new Set<UserRole>(['viewer', 'estimator', 'reviewer', 'approver', 'admin']);
 const ALLOWED_SCOPES = new Set<Permission>([
@@ -27,6 +28,19 @@ const ORGANIZATION_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/;
 const NONCE_PATTERN = /^[a-zA-Z0-9._:-]{8,128}$/;
 const BASE64URL_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const CLOCK_SKEW_SECONDS = 60;
+
+export function constantTimeEqual(provided: string, expected: string): boolean {
+  if (!provided || !expected) return false;
+  const providedDigest = createHash('sha256').update(provided, 'utf8').digest();
+  const expectedDigest = createHash('sha256').update(expected, 'utf8').digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
+export function visionBearerToken(request: Request): string {
+  const authorization = request.headers.get(VISION_INTEGRATION_AUTH_HEADER)?.trim() || '';
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization);
+  return match?.[1] || '';
+}
 
 export interface TrustedPrincipalPayload {
   v: 1;

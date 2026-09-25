@@ -1,24 +1,23 @@
 import 'server-only';
 
-import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import { randomUUID } from 'crypto';
 import type { Principal } from '@/types/canonical';
 import type { Permission } from '@/lib/autobidder/auth/authorization';
 import { requirePermission } from '@/lib/autobidder/auth/authorization';
 import { requestPrincipal } from '@/lib/autobidder/auth/request-principal';
-import { VISION_TRUSTED_PRINCIPAL_HEADER, verifyTrustedVisionPrincipal } from '@/lib/platform/trusted-principal';
+import {
+  constantTimeEqual,
+  VISION_INTEGRATION_AUTH_HEADER,
+  VISION_TRUSTED_PRINCIPAL_HEADER,
+  verifyTrustedVisionPrincipal,
+  visionBearerToken,
+} from '@/lib/platform/trusted-principal';
 
-export const VISION_INTEGRATION_AUTH_HEADER = 'authorization';
+export { constantTimeEqual, VISION_INTEGRATION_AUTH_HEADER } from '@/lib/platform/trusted-principal';
 
 type AuthDecision =
   | { allowed: true; actor: string }
   | { allowed: false; status: 401 | 503; code: 'UNAUTHORIZED' | 'INTEGRATION_NOT_CONFIGURED'; message: string };
-
-export function constantTimeEqual(provided: string, expected: string): boolean {
-  if (!provided || !expected) return false;
-  const providedDigest = createHash('sha256').update(provided, 'utf8').digest();
-  const expectedDigest = createHash('sha256').update(expected, 'utf8').digest();
-  return timingSafeEqual(providedDigest, expectedDigest);
-}
 
 export function authenticateVisionRequest(input: {
   configuredToken: string;
@@ -38,11 +37,6 @@ export function authenticateVisionRequest(input: {
     return { allowed: false, status: 401, code: 'UNAUTHORIZED', message: 'Invalid integration credentials.' };
   }
   return { allowed: true, actor: 'backoffice-service' };
-}
-
-function bearerToken(request: Request): string {
-  const match = /^Bearer ([^\s]+)$/i.exec(request.headers.get(VISION_INTEGRATION_AUTH_HEADER)?.trim() || '');
-  return match?.[1] || '';
 }
 
 function normalizeCorrelationId(value: string | null): string {
@@ -101,7 +95,7 @@ export function withVisionIntegration<TArgs extends unknown[]>(
     const correlationId = normalizeCorrelationId(request.headers.get('x-correlation-id'));
     const decision = authenticateVisionRequest({
       configuredToken: (process.env.VISION_API_TOKEN || '').trim(),
-      providedToken: bearerToken(request),
+      providedToken: visionBearerToken(request),
       directLoopback: developmentLoopback(request),
     });
     const actor = normalizedActor(request, decision.allowed ? decision.actor : 'unknown');
@@ -159,7 +153,7 @@ export function withVisionUserOrIntegration<TArgs extends unknown[]>(
     }
     const decision = authenticateVisionRequest({
       configuredToken: (process.env.VISION_API_TOKEN || '').trim(),
-      providedToken: bearerToken(request),
+      providedToken: visionBearerToken(request),
       directLoopback: developmentLoopback(request),
     });
     const actor = decision.allowed ? decision.actor : 'unknown';
