@@ -5,8 +5,9 @@ import type { Principal } from '@/types/canonical';
 import type { Permission } from '@/lib/autobidder/auth/authorization';
 import { requirePermission } from '@/lib/autobidder/auth/authorization';
 import { requestPrincipal } from '@/lib/autobidder/auth/request-principal';
+import { VISION_TRUSTED_PRINCIPAL_HEADER, verifyTrustedVisionPrincipal } from '@/lib/platform/trusted-principal';
 
-export const VISION_INTEGRATION_AUTH_HEADER = 'x-vulpine-integration-key';
+export const VISION_INTEGRATION_AUTH_HEADER = 'authorization';
 
 type AuthDecision =
   | { allowed: true; actor: string }
@@ -39,6 +40,11 @@ export function authenticateVisionRequest(input: {
   return { allowed: true, actor: 'backoffice-service' };
 }
 
+function bearerToken(request: Request): string {
+  const match = /^Bearer ([^\s]+)$/i.exec(request.headers.get(VISION_INTEGRATION_AUTH_HEADER)?.trim() || '');
+  return match?.[1] || '';
+}
+
 function normalizeCorrelationId(value: string | null): string {
   const candidate = value?.trim() || '';
   return /^[a-zA-Z0-9._:-]{8,128}$/.test(candidate) ? candidate : randomUUID();
@@ -54,6 +60,10 @@ function isDirectLoopback(request: Request): boolean {
     .split(',')
     .map((address) => address.trim())
     .every((address) => address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1');
+}
+
+function developmentLoopback(request: Request): boolean {
+  return process.env.NODE_ENV !== 'production' && isDirectLoopback(request);
 }
 
 function normalizedActor(request: Request, fallback: string): string {
@@ -91,8 +101,8 @@ export function withVisionIntegration<TArgs extends unknown[]>(
     const correlationId = normalizeCorrelationId(request.headers.get('x-correlation-id'));
     const decision = authenticateVisionRequest({
       configuredToken: (process.env.VISION_API_TOKEN || '').trim(),
-      providedToken: request.headers.get(VISION_INTEGRATION_AUTH_HEADER) || '',
-      directLoopback: isDirectLoopback(request),
+      providedToken: bearerToken(request),
+      directLoopback: developmentLoopback(request),
     });
     const actor = normalizedActor(request, decision.allowed ? decision.actor : 'unknown');
 
@@ -149,15 +159,44 @@ export function withVisionUserOrIntegration<TArgs extends unknown[]>(
     }
     const decision = authenticateVisionRequest({
       configuredToken: (process.env.VISION_API_TOKEN || '').trim(),
-      providedToken: request.headers.get(VISION_INTEGRATION_AUTH_HEADER) || '',
-      directLoopback: isDirectLoopback(request),
+      providedToken: bearerToken(request),
+      directLoopback: developmentLoopback(request),
     });
-    const actor = normalizedActor(request, decision.allowed ? decision.actor : 'unknown');
+    const actor = decision.allowed ? decision.actor : 'unknown';
     if (decision.allowed === false) {
       return finishResponse(Response.json({ ok: false, error: { code: decision.code, message: decision.message, details: {} }, meta: { correlationId } }, { status: decision.status }), { actor, correlationId, method: request.method, route, startedAt });
     }
-    const service: Principal = { id: actor, kind: 'service', displayName: actor, role: 'service', organizationId: 'local', scopes: [permission] };
-    const response = await handler(request, service, ...args);
-    return finishResponse(response, { actor, correlationId, method: request.method, route, startedAt });
+    if (decision.actor === 'server-local') {
+      const service: Principal = { id: actor, kind: 'service', displayName: actor, role: 'service', organizationId: 'local', scopes: [permission] };
+      const response = await handler(request, service, ...args);
+      return finishResponse(response, { actor, correlationId, method: request.method, route, startedAt });
+    }
+
+    const verification = verifyTrustedVisionPrincipal(
+      request.headers.get(VISION_TRUSTED_PRINCIPAL_HEADER) || '',
+      (process.env.VISION_API_TOKEN || '').trim(),
+    );
+    if (verification.valid === false) {
+      return finishResponse(
+        Response.json(
+          { ok: false, error: { code: verification.code, message: verification.message, details: {} }, meta: { correlationId } },
+          { status: 401 },
+        ),
+        { actor: 'unknown', correlationId, method: request.method, route, startedAt },
+      );
+    }
+    try {
+      requirePermission(verification.principal, permission);
+    } catch (error: any) {
+      return finishResponse(
+        Response.json(
+          { ok: false, error: { code: error.code || 'FORBIDDEN', message: error.message || 'Permission denied.', details: error.details || {} }, meta: { correlationId } },
+          { status: error.status || 403 },
+        ),
+        { actor: verification.principal.id, correlationId, method: request.method, route, startedAt },
+      );
+    }
+    const response = await handler(request, verification.principal, ...args);
+    return finishResponse(response, { actor: verification.principal.id, correlationId, method: request.method, route, startedAt });
   };
 }

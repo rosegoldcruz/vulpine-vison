@@ -4,8 +4,10 @@ import { ProjectRepository } from '@/lib/autobidder/repositories/project-reposit
 import { fail, ok } from '@/lib/autobidder/api/response';
 import { readBinary } from '@/lib/autobidder/storage/file-store';
 import { discoverWorkbookSchema } from '@/lib/autobidder/services/workbook-parser';
+import { withVisionUserOrIntegration } from '@/lib/platform/integration-auth';
+import type { Principal } from '@/types/canonical';
 
-export async function POST(req: Request) {
+async function discoverProjectWorkbook(req: Request, principal: Principal) {
   try {
     const body = await req.json();
     const projectId = `${body?.projectId || ''}`;
@@ -14,7 +16,7 @@ export async function POST(req: Request) {
     }
 
     const projectRepo = new ProjectRepository();
-    const project = await projectRepo.get(projectId);
+    const project = await projectRepo.get(projectId, principal.organizationId);
     if (!project) {
       return fail({ code: 'NOT_FOUND', message: 'Project not found.', details: {} }, 404);
     }
@@ -39,3 +41,5 @@ export async function POST(req: Request) {
     return fail({ code: 'WORKBOOK_DISCOVERY_FAILED', message: error?.message || 'Workbook discovery failed.', details: {} }, 400);
   }
 }
+
+export const POST = withVisionUserOrIntegration('project:read', 'POST /api/workbook', discoverProjectWorkbook);

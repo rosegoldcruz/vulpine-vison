@@ -6,6 +6,7 @@ import path from 'path';
 import { tmpdir } from 'os';
 import net from 'net';
 import AdmZip from 'adm-zip';
+import { createHmac, randomUUID } from 'node:crypto';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 let port = 0;
@@ -14,6 +15,7 @@ let baseUrl = '';
 const REAL_PDF_A = path.join(REPO_ROOT, 'fixtures/phase-zero/real-plan-a.pdf');
 const REAL_PDF_B = path.join(REPO_ROOT, 'fixtures/phase-zero/real-plan-b.pdf');
 const ROUTE_XLSX = path.join(REPO_ROOT, 'fixtures/phase-zero/route-workbook.xlsx');
+const VISION_API_TOKEN = 'phase-zero-vision-api-token-with-sufficient-entropy';
 
 let server: ChildProcessWithoutNullStreams | null = null;
 let restartProjectId = '';
@@ -65,10 +67,30 @@ async function startServer() {
     env: {
       ...process.env,
       LEADS_INTEGRATION_KEY: process.env.LEADS_INTEGRATION_KEY || 'test-integration-key',
+      VISION_API_TOKEN,
     },
     stdio: 'pipe',
   });
   await waitForServerReady(`${baseUrl}/`);
+}
+
+function visionAuthHeaders(): Record<string, string> {
+  const now = Math.floor(Date.now() / 1000);
+  const encoded = Buffer.from(JSON.stringify({
+    v: 1,
+    sub: 'phase-zero-admin',
+    org: 'local',
+    role: 'admin',
+    scopes: [],
+    iat: now - 5,
+    exp: now + 120,
+    nonce: randomUUID(),
+  }), 'utf8').toString('base64url');
+  const signature = createHmac('sha256', VISION_API_TOKEN).update(encoded, 'utf8').digest('base64url');
+  return {
+    authorization: `Bearer ${VISION_API_TOKEN}`,
+    'x-vulpine-principal': `${encoded}.${signature}`,
+  };
 }
 
 async function stopServer() {
@@ -86,7 +108,7 @@ async function stopServer() {
 async function createProject(name: string) {
   const res = await fetch(`${baseUrl}/api/projects`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...visionAuthHeaders() },
     body: JSON.stringify({ projectName: name }),
   });
   const json = await res.json();
@@ -101,7 +123,7 @@ function fileFromPath(filePath: string, fileName: string, mimeType: string) {
 async function uploadFiles(projectId: string | null, files: File[]) {
   const form = new FormData();
   files.forEach((f) => form.append('files', f));
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = visionAuthHeaders();
   if (projectId) {
     headers['x-project-id'] = projectId;
   }
@@ -117,7 +139,7 @@ async function uploadFiles(projectId: string | null, files: File[]) {
 async function processJob(jobId: string) {
   const res = await fetch(`${baseUrl}/api/jobs/${jobId}/process`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...visionAuthHeaders() },
     body: JSON.stringify({ jobId }),
   });
   const json = await res.json();
@@ -189,7 +211,7 @@ describe.sequential('Phase Zero route-level validation', () => {
     expect(pdfLogs[0].metadataDurationMs).toBeGreaterThanOrEqual(0);
     expect(pdfLogs[0].textExtractionAttempts).toBeGreaterThan(0);
 
-    const getRes = await fetch(`${baseUrl}/api/jobs/${jobId}`);
+    const getRes = await fetch(`${baseUrl}/api/jobs/${jobId}`, { headers: visionAuthHeaders() });
     const getJson = await getRes.json();
     expect(getRes.status).toBe(200);
     expect(getJson.data.job.id).toBe(jobId);
@@ -279,7 +301,7 @@ describe.sequential('Phase Zero route-level validation', () => {
 
     const workbookRes = await fetch(`${baseUrl}/api/workbook`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...visionAuthHeaders() },
       body: JSON.stringify({ projectId }),
     });
     const workbookJson = await workbookRes.json();
@@ -332,7 +354,7 @@ describe.sequential('Phase Zero route-level validation', () => {
     await stopServer();
     await startServer();
 
-    const resumed = await fetch(`${baseUrl}/api/jobs/${restartJobId}`);
+    const resumed = await fetch(`${baseUrl}/api/jobs/${restartJobId}`, { headers: visionAuthHeaders() });
     const resumedJson = await resumed.json();
     expect(resumed.status).toBe(200);
     expect(resumedJson.data.job.id).toBe(restartJobId);
@@ -343,6 +365,7 @@ describe.sequential('Phase Zero route-level validation', () => {
   it('returns canonical errors for unsupported, corrupt, invalid, and unknown cases', async () => {
     const missingHeaderUpload = await fetch(`${baseUrl}/api/uploads`, {
       method: 'POST',
+      headers: visionAuthHeaders(),
       body: new FormData(),
     });
     const missingHeaderJson = await missingHeaderUpload.json();
@@ -399,7 +422,7 @@ describe.sequential('Phase Zero route-level validation', () => {
     expectErrorContract(corruptXlsxProcess.json);
     expect(['CORRUPT_WORKBOOK', 'WORKBOOK_SCHEMA_UNSUPPORTED']).toContain(corruptXlsxProcess.json.error.code);
 
-    const unknownJob = await fetch(`${baseUrl}/api/jobs/00000000-0000-0000-0000-000000000000`);
+    const unknownJob = await fetch(`${baseUrl}/api/jobs/00000000-0000-0000-0000-000000000000`, { headers: visionAuthHeaders() });
     const unknownJobJson = await unknownJob.json();
     expect(unknownJob.status).toBe(404);
     expectErrorContract(unknownJobJson, 'NOT_FOUND');
@@ -411,12 +434,12 @@ describe.sequential('Phase Zero route-level validation', () => {
     ]);
     const approve = await fetch(`${baseUrl}/api/jobs/${uploadState.json.data.job.id}/approve-unit-mix`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...visionAuthHeaders() },
       body: JSON.stringify({ approvedBy: 'tester' }),
     });
     const approveJson = await approve.json();
-    expect(approve.status).toBe(409);
-    expectErrorContract(approveJson, 'INVALID_STATE_TRANSITION');
+    expect(approve.status).toBe(410);
+    expectErrorContract(approveJson, 'LEGACY_ROUTE_DISABLED');
   }, 300000);
 
   it('enforces server-only boundaries in runtime artifacts', async () => {
