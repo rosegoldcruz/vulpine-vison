@@ -7,6 +7,7 @@ import { tmpdir } from 'os';
 import net from 'net';
 import AdmZip from 'adm-zip';
 import { createHmac, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 let port = 0;
@@ -62,15 +63,19 @@ async function reservePort(): Promise<number> {
 }
 
 async function startServer() {
-  server = spawn('npm', ['run', 'start', '--', '-p', `${port}`], {
+  server = spawn('python3', ['scripts/next-lifecycle.py', 'start', '-H', '127.0.0.1', '-p', `${port}`], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
+      NODE_ENV: 'production',
       LEADS_INTEGRATION_KEY: process.env.LEADS_INTEGRATION_KEY || 'test-integration-key',
       VISION_API_TOKEN,
     },
     stdio: 'pipe',
   });
+  // Unconsumed pipes can fill and stall a long-running child.
+  server.stdout.resume();
+  server.stderr.resume();
   await waitForServerReady(`${baseUrl}/`);
 }
 
@@ -97,10 +102,14 @@ async function stopServer() {
   if (!server) {
     return;
   }
-  server.kill('SIGTERM');
-  await sleep(1000);
-  if (!server.killed) {
-    server.kill('SIGKILL');
+  const child = server;
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = once(child, 'exit');
+    child.kill('SIGTERM');
+    const escalation = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }, 5000);
+    try { await exited; } finally { clearTimeout(escalation); }
   }
   server = null;
 }

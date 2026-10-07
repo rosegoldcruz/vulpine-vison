@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "exec python3 scripts/next-lifecycle.py dev",
     "build": "next build",
-    "start": "next start",
+    "start": "exec python3 scripts/next-lifecycle.py start",
     "clean": "rm -rf .next",
     "lint": "tsc --noEmit",
     "test": "vitest run"
