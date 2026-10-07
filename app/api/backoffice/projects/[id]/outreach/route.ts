@@ -22,6 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const principal = requestPrincipal(request);
+    requirePermission(principal, 'project:read');
     const { id } = await context.params;
     assertProjectAccess(id, principal);
     const body = await request.json();

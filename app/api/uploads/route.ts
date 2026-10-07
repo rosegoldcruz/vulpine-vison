@@ -5,8 +5,11 @@ import { asApiServiceError } from '@/lib/autobidder/api/errors';
 import { ingestUploads } from '@/lib/autobidder/services/upload-ingestion';
 import { withVisionUserOrIntegration } from '@/lib/platform/integration-auth';
 import type { Principal } from '@/types/canonical';
+import { assertProjectAccess } from '@/lib/autobidder/auth/resource-access';
+import { readLimitedUploadFormData, reserveUpload } from '@/lib/autobidder/ingestion/upload-limits';
 
 async function uploadFiles(req: Request, principal: Principal) {
+  let release: (() => void) | undefined;
   try {
     const projectId = req.headers.get('x-project-id') || '';
     if (!projectId) {
@@ -20,7 +23,9 @@ async function uploadFiles(req: Request, principal: Principal) {
       );
     }
 
-    const formData = await req.formData();
+    assertProjectAccess(projectId, principal);
+    release = reserveUpload();
+    const formData = await readLimitedUploadFormData(req);
     const result = await ingestUploads(projectId, formData, principal);
     return ok(result, 201);
   } catch (error: any) {
@@ -34,6 +39,8 @@ async function uploadFiles(req: Request, principal: Principal) {
       },
       typed.status,
     );
+  } finally {
+    release?.();
   }
 }
 

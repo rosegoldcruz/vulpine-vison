@@ -13,6 +13,7 @@ import { advanceCanonicalSystemState } from '@/lib/autobidder/services/canonical
 import type { Principal } from '@/types/canonical';
 import { initializeFileQueue } from '@/lib/autobidder/services/file-queue-service';
 import { createNotificationOnce } from '@/lib/autobidder/services/notification-service';
+import { VISION_UPLOAD_LIMITS } from '@/lib/autobidder/ingestion/upload-limits';
 
 const ingestionPrincipal: Principal = {
   id: 'cabinet-ingestion-service', kind: 'service', displayName: 'Cabinet ingestion service',
@@ -45,8 +46,14 @@ export async function ingestUploads(projectId: string, formData: FormData, princ
   if (files.length === 0) {
     throw new ApiServiceError('UPLOAD_FILES_REQUIRED', 'At least one upload file is required.', 400);
   }
+  if (files.length > VISION_UPLOAD_LIMITS.maxFiles) throw new ApiServiceError('UPLOAD_FILE_LIMIT_EXCEEDED', 'Upload contains too many files.', 413);
+  const incomingBytes = files.reduce((sum, value) => sum + (value instanceof File ? value.size : 0), 0);
+  if (incomingBytes > VISION_UPLOAD_LIMITS.maxBodyBytes || files.some((value) => value instanceof File && value.size > VISION_UPLOAD_LIMITS.maxFileBytes)) {
+    throw new ApiServiceError('UPLOAD_TOO_LARGE', 'Upload exceeds the file byte limit.', 413);
+  }
 
   const candidates: IngestionCandidate[] = [];
+  let expandedBytes = 0;
 
   for (const value of files) {
     if (!(value instanceof File)) {
@@ -56,10 +63,16 @@ export async function ingestUploads(projectId: string, formData: FormData, princ
     if (isZip(value.name)) {
       let extracted: IngestionCandidate[];
       try {
-        extracted = discoverZipArchive(value.name, bytes);
+        if (candidates.length >= VISION_UPLOAD_LIMITS.maxEntries || expandedBytes >= VISION_UPLOAD_LIMITS.maxExpandedBytes) throw new ApiServiceError('UPLOAD_EXPANSION_LIMIT_EXCEEDED', 'Upload exceeds the combined archive budget.', 413);
+        extracted = discoverZipArchive(value.name, bytes, {
+          maxArchiveBytes: VISION_UPLOAD_LIMITS.maxFileBytes,
+          maxEntries: VISION_UPLOAD_LIMITS.maxEntries - candidates.length,
+          maxEntryUncompressedBytes: VISION_UPLOAD_LIMITS.maxFileBytes,
+          maxTotalUncompressedBytes: VISION_UPLOAD_LIMITS.maxExpandedBytes - expandedBytes,
+        });
       } catch (error) {
         if (error instanceof ArchiveSafetyError) {
-          throw new ApiServiceError(error.code, error.message, 400, error.details);
+          throw new ApiServiceError(error.code, error.message, /LIMIT|TOO_LARGE/.test(error.code) ? 413 : 400, error.details);
         }
         throw error;
       }
@@ -84,8 +97,11 @@ export async function ingestUploads(projectId: string, formData: FormData, princ
         });
       }
       candidates.push(...extracted);
+      expandedBytes += extracted.reduce((sum, entry) => sum + (entry.bytes?.length || 0), 0);
     } else {
+      if (candidates.length >= VISION_UPLOAD_LIMITS.maxEntries || bytes.length > VISION_UPLOAD_LIMITS.maxExpandedBytes - expandedBytes) throw new ApiServiceError('UPLOAD_EXPANSION_LIMIT_EXCEEDED', 'Upload exceeds the combined file budget.', 413);
       candidates.push({ originalPath: value.webkitRelativePath || value.name, bytes, mimeType: value.type || undefined });
+      expandedBytes += bytes.length;
     }
   }
 

@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { readFile } from 'node:fs/promises';
 import { getServerEnv } from '@/lib/autobidder/env/server-env';
 import { findOllamaCloudModel } from '@/lib/autobidder/llm/model-catalog';
+import { ApiServiceError } from '@/lib/autobidder/api/errors';
 
 export interface LlmMessage {
   role: 'user' | 'model';
@@ -105,6 +106,9 @@ export async function generateChatCompletion(args: {
   systemPrompt?: string;
   mode?: ChatMode;
 }): Promise<string> {
+  if (args.message.length > 20000 || args.history.length > 40 || args.history.some((item) => item.text.length > 20000)) {
+    throw new ApiServiceError('VALIDATION_ERROR', 'Chat input exceeds the request limit.', 400);
+  }
   const env = getServerEnv();
   const mode = args.mode || env.LLM_MODE;
   const textModel = normalizeModelName(args.model || env.LLM_MODEL);
@@ -118,6 +122,10 @@ export async function generateChatCompletion(args: {
       ? 'Voice mode is enabled. Respond with short spoken sentences, natural pacing, and no markdown or bullet lists.'
       : '';
   const systemPrompt = voiceStylePrompt ? `${baseSystemPrompt}\n\n${voiceStylePrompt}` : baseSystemPrompt;
+  if (systemPrompt.length + args.message.length + args.history.reduce((sum, item) => sum + item.text.length, 0) > 100000) {
+    throw new ApiServiceError('VALIDATION_ERROR', 'Chat context exceeds the request limit.', 400);
+  }
+  const signal = AbortSignal.timeout(60000);
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -146,6 +154,9 @@ export async function generateChatCompletion(args: {
       contents,
       config: {
         systemInstruction: systemPrompt,
+        maxOutputTokens: 4096,
+        abortSignal: signal,
+        httpOptions: { timeout: 60000, retryOptions: { attempts: 1 } },
       },
     });
 
@@ -169,13 +180,13 @@ export async function generateChatCompletion(args: {
         'content-type': 'application/json',
         authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({ model: config.model, messages }),
+      body: JSON.stringify({ model: config.model, messages, max_tokens: 4096 }),
       cache: 'no-store',
+      signal,
     });
 
     if (!res.ok) {
-      const raw = await res.text();
-      throw new Error(`${config.providerName} request failed (${res.status}): ${raw.slice(0, 400)}`);
+      throw new Error(`${config.providerName} request failed (${res.status}).`);
     }
 
     const json: any = await res.json();
@@ -224,13 +235,14 @@ export async function generateChatCompletion(args: {
         model: modelId,
         input: responseInput,
         stream: false,
+        max_output_tokens: 4096,
       }),
       cache: 'no-store',
+      signal,
     });
 
     if (!res.ok) {
-      const raw = await res.text();
-      throw new Error(`Ollama responses request failed (${res.status}): ${raw.slice(0, 400)}`);
+      throw new Error(`Ollama responses request failed (${res.status}).`);
     }
 
     const payload = await res.json();
@@ -250,6 +262,7 @@ export async function generateChatCompletion(args: {
         model: textModel,
       });
     } catch (primaryError: any) {
+      if (signal.aborted) throw primaryError;
       if (env.LLM_FALLBACK_PROVIDER === 'gemini') {
         return runGemini();
       }
@@ -257,7 +270,7 @@ export async function generateChatCompletion(args: {
       return runOpenAiCompatible({
         apiKey: env.OPENAI_API_KEY,
         baseUrl: env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-        providerName: `openai fallback after metamuse failure (${primaryError?.message || 'unknown error'})`,
+        providerName: 'openai fallback',
         model: textModel,
       });
     }
@@ -272,10 +285,11 @@ export async function generateChatCompletion(args: {
         model: voiceModel,
       });
     } catch (openAiVoiceError: any) {
+      if (signal.aborted) throw openAiVoiceError;
       return runOpenAiCompatible({
         apiKey: env.XAI_API_KEY,
         baseUrl: env.XAI_BASE_URL || 'https://api.x.ai/v1',
-        providerName: `xai fallback after openai voice failure (${openAiVoiceError?.message || 'unknown error'})`,
+        providerName: 'xai fallback',
         model: normalizeModelName(env.XAI_VOICE_MODEL),
       });
     }
@@ -321,15 +335,16 @@ export async function initVoiceRealtimeSession(): Promise<VoiceSessionInitResult
         voice: env.OPENAI_REALTIME_VOICE,
         modalities: ['audio', 'text'],
         instructions: runtimeSystemPrompt,
+        max_response_output_tokens: 4096,
       }),
       cache: 'no-store',
+      signal: AbortSignal.timeout(60000),
     });
 
     if (!res.ok) {
-      const raw = await res.text();
       return {
         provider: 'xai-fallback',
-        reason: `OpenAI realtime session request failed (${res.status}): ${raw.slice(0, 300)}`,
+        reason: 'Realtime voice is temporarily unavailable.',
         model: normalizeModelName(env.XAI_VOICE_MODEL),
       };
     }
@@ -339,7 +354,7 @@ export async function initVoiceRealtimeSession(): Promise<VoiceSessionInitResult
   } catch (error: any) {
     return {
       provider: 'xai-fallback',
-      reason: error?.message || 'Unknown OpenAI realtime session error.',
+      reason: 'Realtime voice is temporarily unavailable.',
       model: normalizeModelName(env.XAI_VOICE_MODEL),
     };
   }

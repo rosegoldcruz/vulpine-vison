@@ -1,6 +1,10 @@
 export const runtime = 'nodejs';
 
-import { ok } from '@/lib/autobidder/api/response';
+import { fail, ok } from '@/lib/autobidder/api/response';
+import { asApiServiceError } from '@/lib/autobidder/api/errors';
+import { requestPrincipal } from '@/lib/autobidder/auth/request-principal';
+import { requirePermission } from '@/lib/autobidder/auth/authorization';
+import { acquireAiRequest } from '@/lib/autobidder/services/ai-request-limit';
 import { buildProviderCatalog, type ModelCapability, type ProviderCatalog } from '@/lib/autobidder/llm/model-catalog';
 
 type ProviderWithStatus = ProviderCatalog & {
@@ -177,11 +181,20 @@ async function hydrateProvider(provider: ReturnType<typeof buildProviderCatalog>
   }
 }
 
-export async function GET() {
-  const staticCatalog = buildProviderCatalog(process.env);
-  const providers = await Promise.all(staticCatalog.map(hydrateProvider));
-
-  return ok({
-    providers,
-  });
+export async function GET(request: Request) {
+  try {
+    const principal = requestPrincipal(request);
+    requirePermission(principal, 'project:read');
+    const release = acquireAiRequest(principal);
+    try {
+      const staticCatalog = buildProviderCatalog(process.env);
+      const providers = await Promise.all(staticCatalog.map(hydrateProvider));
+      return ok({ providers });
+    } finally {
+      release();
+    }
+  } catch (error) {
+    const typed = asApiServiceError(error);
+    return fail({ code: typed.code, message: typed.message }, typed.status);
+  }
 }

@@ -1,5 +1,14 @@
 # LEADS_VISION_HANDOFF_CONTRACT
 
+## Security containment
+
+The legacy handoff endpoint currently returns `503 HANDOFF_AUTH_NOT_CONFIGURED`
+before reading the request or creating a project. Its shared-key contract did
+not bind project creation to a verified organization. The historical contract
+below is unavailable until an approved organization-bound caller contract and
+authorization policy are provisioned and tested. Client-supplied organization
+headers or a shared integration key alone cannot establish tenant ownership.
+
 ## Purpose
 Versioned contract for creating bid projects in Vision from the Leads product.
 

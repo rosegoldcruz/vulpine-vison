@@ -146,12 +146,17 @@ async function processJob(jobId: string) {
   return { status: res.status, json };
 }
 
-function expectErrorContract(payload: any, expectedCode?: string) {
+function expectErrorContract(payload: any, expectedCode?: string, status = 400) {
   expect(payload).toHaveProperty('ok', false);
   expect(payload).toHaveProperty('error');
   expect(typeof payload.error.code).toBe('string');
   expect(typeof payload.error.message).toBe('string');
-  expect(payload.error).toHaveProperty('details');
+  if (status >= 500) {
+    expect(payload.error).not.toHaveProperty('details');
+    expect(payload.error.message).toBe('The request could not be completed.');
+  } else {
+    expect(payload.error).toHaveProperty('details');
+  }
   if (expectedCode) {
     expect(payload.error.code).toBe(expectedCode);
   }
@@ -260,11 +265,11 @@ describe.sequential('Phase Zero route-level validation', () => {
       }),
     });
     const json = await res.json();
-    expect(res.status).toBe(401);
-    expectErrorContract(json, 'UNAUTHORIZED');
+    expect(res.status).toBe(503);
+    expectErrorContract(json, 'HANDOFF_AUTH_NOT_CONFIGURED', 503);
   });
 
-  it('creates a lead handoff project with integration auth', async () => {
+  it('keeps organization-unbound legacy lead handoff disabled even with integration auth', async () => {
     const res = await fetch(`${baseUrl}/api/integrations/leads/handoff`, {
       method: 'POST',
       headers: {
@@ -282,11 +287,8 @@ describe.sequential('Phase Zero route-level validation', () => {
       }),
     });
     const json = await res.json();
-    expect(res.status).toBe(201);
-    expect(json.ok).toBe(true);
-    expect(json.data.project.leadHandoff.leadId).toBe('lead-001');
-    expect(json.data.project.leadHandoff.correlationId).toBe('corr-route-test-001');
-    expect(json.data.handoff.projectId).toBe(json.data.project.projectId);
+    expect(res.status).toBe(503);
+    expectErrorContract(json, 'HANDOFF_AUTH_NOT_CONFIGURED', 503);
   });
 
   it('verifies real XLSX ingestion and workbook schema metadata via routes', async () => {

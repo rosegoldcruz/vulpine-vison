@@ -183,13 +183,16 @@ export async function* iteratePdfRasterPages(request: PdfRasterRequest): AsyncGe
   }
 
   let document: any;
+  let loadingTask: any;
   try {
-    document = await pdfjs.getDocument({
+    loadingTask = pdfjs.getDocument({
       data: new Uint8Array(request.pdf),
       CanvasFactory: NodeCanvasFactory,
       ...pdfAssetOptions(),
-    }).promise;
+    });
+    document = await loadingTask.promise;
   } catch (error) {
+    await loadingTask?.destroy().catch(() => undefined);
     throw new PdfRasterError('PDF_OPEN_FAILED', 'PDF is corrupt, encrypted, or unreadable.', {
       documentName: request.documentName,
       cause: error instanceof Error ? error.message : String(error),
@@ -273,7 +276,7 @@ export async function* iteratePdfRasterPages(request: PdfRasterRequest): AsyncGe
     }
   } finally {
     try {
-      await document.destroy();
+      await loadingTask.destroy();
     } catch {}
   }
 }

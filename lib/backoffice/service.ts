@@ -446,19 +446,27 @@ export async function sendOutreach(input: {
     audit({ actorId: input.actorId, action: 'outreach.send', resourceType: 'outreach', resourceId: outreach.id, projectId: outreach.projectId, outcome: 'rejected', reason: 'bid is not safe to send' });
     throw serviceError('BID_NOT_SAFE_TO_SEND', 'The latest bid must be safe to send (or already exported) before outreach can be sent.', 409);
   }
+  // Claim the draft durably before awaiting the provider, including across processes.
+  const claimed = getDatabase().prepare("UPDATE outreach_activities SET status = 'sending', provider = ? WHERE id = ? AND status = 'draft'")
+    .run(input.transport.provider, outreach.id);
+  if (claimed.changes !== 1) throw serviceError('OUTREACH_NOT_SENDABLE', 'Only a draft can be sent.', 409);
   let delivery: EmailDelivery;
   try {
     delivery = await input.transport.send({
       recipient: outreach.recipient, subject: outreach.subject, body: outreach.body, attachmentIds: outreach.attachmentIds,
     });
   } catch (error) {
-    audit({ actorId: input.actorId, action: 'outreach.send', resourceType: 'outreach', resourceId: outreach.id, projectId: outreach.projectId, outcome: 'failed', reason: error instanceof Error ? error.message : 'provider failure' });
-    throw serviceError('EMAIL_DELIVERY_FAILED', 'The configured email provider did not accept the message.', 502);
+    // A timeout can occur after acceptance. Provider reconciliation is required
+    // before an operator retries; never automatically release this claim.
+    getDatabase().prepare("UPDATE outreach_activities SET status = 'delivery_unknown' WHERE id = ? AND status = 'sending'").run(outreach.id);
+    audit({ actorId: input.actorId, action: 'outreach.send', resourceType: 'outreach', resourceId: outreach.id, projectId: outreach.projectId, outcome: 'failed', reason: 'Provider delivery outcome requires reconciliation.' });
+    throw serviceError('EMAIL_DELIVERY_FAILED', 'Delivery could not be confirmed. Check the provider before retrying.', 502);
   }
   const sentAt = delivery.acceptedAt || new Date().toISOString();
   withTransaction((db) => {
-    db.prepare("UPDATE outreach_activities SET status = 'sent', provider = ?, sent_at = ? WHERE id = ? AND status = 'draft'")
+    const saved = db.prepare("UPDATE outreach_activities SET status = 'sent', provider = ?, sent_at = ? WHERE id = ? AND status = 'sending'")
       .run(input.transport.provider, sentAt, outreach.id);
+    if (saved.changes !== 1) throw serviceError('OUTREACH_STATE_CHANGED', 'Delivery state changed; check the provider before retrying.', 409);
     insertOperatingEvent(db, { type: 'outreach_activity', projectId: outreach.projectId, dealId: outreach.dealId, occurredAt: sentAt });
   });
   const sent = getOutreach(outreach.id)!;

@@ -7,6 +7,7 @@ import { ProjectRepository } from '@/lib/autobidder/repositories/project-reposit
 import { BidJobRepository } from '@/lib/autobidder/repositories/bid-job-repository';
 import {
   createOutreachDraft,
+  getOutreach,
   listDeals,
   listProviderSnapshots,
   projectLogistics,
@@ -119,6 +120,37 @@ describe('persistent backoffice operations', () => {
 
     process.env.EMAIL_API_ENDPOINT = 'https://email.example.test/send';
     expect(emailConnectionState()).toMatchObject({ configured: true, status: 'configured_unverified' });
+  });
+
+  it('claims an outreach draft before delivery so concurrent requests cannot send twice', async () => {
+    const { project, job } = await fixture();
+    saveDeal({ projectId: project.projectId, companyName: 'Acme', stage: 'ready_to_send', approvedBidCents: 500_00, currency: 'USD', qaStatus: 'passed' }, 'approver-1');
+    const draft = createOutreachDraft(project.projectId, { recipient: 'buyer@example.test', scope: 'Cabinets', inclusions: ['Casework'], exclusions: ['Counters'], assumptions: ['Verified'], estimatorSignature: 'Estimator' }, 'estimator-1');
+    getDatabase().prepare("UPDATE bid_jobs SET workflow_state = 'cabinet_bid_safe_to_send' WHERE id = ?").run(job.id);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const send = vi.fn(async () => { await gate; return { externalId: 'test-delivery', acceptedAt: new Date().toISOString() }; });
+    const input = { outreachId: draft.id, actorId: 'approver-1', confirmation: 'SEND_APPROVED_BID_OUTREACH', transport: { provider: 'test-provider', send } };
+    const first = sendOutreach(input);
+    const second = sendOutreach(input).then(() => 'accepted', (error) => error.code);
+    release();
+    await first;
+    expect(await second).toBe('OUTREACH_NOT_SENDABLE');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(readBackofficeAnalytics().outreachVelocity.currentCount).toBe(1);
+  });
+
+  it('does not automatically resend after an uncertain provider failure', async () => {
+    const { project, job } = await fixture();
+    saveDeal({ projectId: project.projectId, companyName: 'Acme', stage: 'ready_to_send', approvedBidCents: 500_00, currency: 'USD', qaStatus: 'passed' }, 'approver-1');
+    const draft = createOutreachDraft(project.projectId, { recipient: 'buyer@example.test', scope: 'Cabinets', inclusions: ['Casework'], exclusions: ['Counters'], assumptions: ['Verified'], estimatorSignature: 'Estimator' }, 'estimator-1');
+    getDatabase().prepare("UPDATE bid_jobs SET workflow_state = 'cabinet_bid_safe_to_send' WHERE id = ?").run(job.id);
+    const send = vi.fn(async () => { throw new Error('Test network timeout after provider may have accepted'); });
+    const input = { outreachId: draft.id, actorId: 'approver-1', confirmation: 'SEND_APPROVED_BID_OUTREACH', transport: { provider: 'test-provider', send } };
+    await expect(sendOutreach(input)).rejects.toMatchObject({ code: 'EMAIL_DELIVERY_FAILED' });
+    expect(getOutreach(draft.id)?.status).toBe('delivery_unknown');
+    await expect(sendOutreach(input)).rejects.toMatchObject({ code: 'OUTREACH_NOT_SENDABLE' });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('keeps provider intelligence separate and gives approved freight quotes precedence over map estimates', async () => {
